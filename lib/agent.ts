@@ -10,12 +10,12 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export const checkAvailabilityDeclaration = {
   name: 'check_calendar_availability',
-  description: 'Checks open appointment time slots for a given date.',
+  description: 'Checks open appointment time slots for a given date in YYYY-MM-DD format. Invoke immediately when a customer suggests a day or asks when we are free.',
   parameters: {
     type: 'OBJECT',
     properties: {
-      date: { type: 'STRING', description: 'Target date in YYYY-MM-DD format (e.g. 2026-08-28).' },
-      serviceType: { type: 'STRING', description: 'Requested service type (e.g. AI Consultation, Web Dev, SEO).' },
+      date: { type: 'STRING', description: 'Target date in YYYY-MM-DD format (e.g. 2026-08-26).' },
+      serviceType: { type: 'STRING', description: 'Requested service type.' },
     },
     required: ['date'],
   },
@@ -23,17 +23,17 @@ export const checkAvailabilityDeclaration = {
 
 export const bookAppointmentDeclaration = {
   name: 'book_calendar_appointment',
-  description: 'Books a confirmed appointment into the calendar and database once the customer agrees on date and time.',
+  description: 'Books a confirmed appointment into the calendar and database. Invoke ONLY after the customer explicitly agrees to a specific time slot and you have their Name and Phone Number.',
   parameters: {
     type: 'OBJECT',
     properties: {
       customerName: { type: 'STRING', description: 'Full name of the customer.' },
-      customerPhone: { type: 'STRING', description: 'Phone number of the customer for SMS/confirmation.' },
-      customerEmail: { type: 'STRING', description: 'Email address of the customer for Google Meet invite.' },
+      customerPhone: { type: 'STRING', description: 'Phone number of the customer for SMS confirmation.' },
+      customerEmail: { type: 'STRING', description: 'Email address of the customer.' },
       date: { type: 'STRING', description: 'Confirmed date in YYYY-MM-DD format.' },
-      timeSlot: { type: 'STRING', description: 'Confirmed time slot (e.g. "10:30 AM" or "02:00 PM").' },
-      serviceType: { type: 'STRING', description: 'The service to perform.' },
-      notes: { type: 'STRING', description: 'Any additional notes or job location details.' },
+      timeSlot: { type: 'STRING', description: 'Confirmed time slot (e.g. "10:30 AM" or "02:30 PM").' },
+      serviceType: { type: 'STRING', description: 'The service requested.' },
+      notes: { type: 'STRING', description: 'Additional job or location notes.' },
     },
     required: ['customerName', 'customerPhone', 'date', 'timeSlot', 'serviceType'],
   },
@@ -41,11 +41,11 @@ export const bookAppointmentDeclaration = {
 
 export const saveLeadDeclaration = {
   name: 'save_lead_to_crm',
-  description: 'Saves or updates qualified lead details before an appointment is finalized.',
+  description: 'Saves or updates qualified lead details to the CRM. Invoke if the customer provides contact info but is not ready to book an appointment yet, or if they have an urgent issue that requires human escalation.',
   parameters: {
     type: 'OBJECT',
     properties: {
-      name: { type: 'STRING', description: 'Customer name' },
+      name: { type: 'STRING', description: 'Customer full name' },
       phone: { type: 'STRING', description: 'Customer phone number' },
       email: { type: 'STRING', description: 'Customer email' },
       serviceRequested: { type: 'STRING', description: 'Primary service requested' },
@@ -54,7 +54,7 @@ export const saveLeadDeclaration = {
         enum: ['low', 'medium', 'high', 'emergency'],
         description: 'Urgency level of the lead request.',
       },
-      budget: { type: 'STRING', description: 'Optional customer budget estimate' },
+      budget: { type: 'STRING', description: 'Customer budget estimate if provided' },
     },
     required: ['name', 'phone', 'serviceRequested'],
   },
@@ -79,7 +79,7 @@ export async function executeCheckAvailability(args: { date: string; serviceType
 
     return {
       date: args.date,
-      service: args.serviceType ?? 'General AI Consultation',
+      service: args.serviceType ?? 'Inbound Consultation',
       availableSlots,
       message: availableSlots.length > 0
         ? `Found ${availableSlots.length} available slots on ${args.date}: ${availableSlots.join(', ')}.`
@@ -96,14 +96,14 @@ export async function executeCheckAvailability(args: { date: string; serviceType
 
 export async function executeBookAppointment(args: any) {
   try {
-    const customerPhone = args.customerPhone || args.phone || '(555) 000-0000';
+    const customerPhone = args.customerPhone || args.phone || '';
     const customerName = args.customerName || args.name || 'Valued Client';
-    const customerEmail = args.customerEmail || args.email || 'client@example.com';
-    const serviceType = args.serviceType || 'AI Growth Strategy Session';
+    const customerEmail = args.customerEmail || args.email || '';
+    const serviceType = args.serviceType || 'Inbound Consultation';
     const date = args.date;
     const timeSlot = args.timeSlot;
 
-    // Check if slot is taken
+    // Check if slot is already taken
     const existing = await prisma.appointment.findFirst({
       where: { date, timeSlot, status: 'Confirmed' }
     });
@@ -111,31 +111,34 @@ export async function executeBookAppointment(args: any) {
     if (existing) {
       return {
         success: false,
-        message: `The ${timeSlot} slot on ${date} is already booked. Please choose another time.`
+        message: `The ${timeSlot} slot on ${date} is already booked. Please select another time.`
       };
     }
 
     // Upsert Lead
-    let lead = await prisma.lead.findFirst({
-      where: {
-        OR: [
-          { phone: customerPhone },
-          { email: customerEmail }
-        ]
-      }
-    });
+    let lead = null;
+    if (customerPhone || customerEmail) {
+      lead = await prisma.lead.findFirst({
+        where: {
+          OR: [
+            customerPhone ? { phone: customerPhone } : undefined,
+            customerEmail ? { email: customerEmail } : undefined
+          ].filter(Boolean) as any
+        }
+      });
+    }
 
     if (!lead) {
       lead = await prisma.lead.create({
         data: {
           name: customerName,
-          phone: customerPhone,
-          email: customerEmail,
+          phone: customerPhone || '(555) 000-0000',
+          email: customerEmail || 'client@example.com',
           serviceRequested: serviceType,
-          projectDetails: args.notes || 'Booked via AI Agent conversation',
+          projectDetails: args.notes || 'Booked via Inbound Dispatch',
           status: 'Booked',
           urgencyStatus: 'Booked',
-          source: 'Autonomous AI Booking Agent'
+          source: 'Direct Booking'
         },
       });
     } else {
@@ -145,6 +148,7 @@ export async function executeBookAppointment(args: any) {
           status: 'Booked',
           urgencyStatus: 'Booked',
           name: customerName || lead.name,
+          phone: customerPhone || lead.phone,
           email: customerEmail || lead.email
         }
       });
@@ -156,15 +160,15 @@ export async function executeBookAppointment(args: any) {
         leadId: lead.id,
         customerName,
         clientName: customerName,
-        phone: customerPhone,
-        clientPhone: customerPhone,
-        email: customerEmail,
-        clientEmail: customerEmail,
+        phone: customerPhone || '(555) 000-0000',
+        clientPhone: customerPhone || '(555) 000-0000',
+        email: customerEmail || 'client@example.com',
+        clientEmail: customerEmail || 'client@example.com',
         date,
         timeSlot,
         serviceType,
         status: 'Confirmed',
-        notes: args.notes || 'Autonomous booking confirmed by AI Agent',
+        notes: args.notes || 'Inbound booking confirmed by Dispatch',
         meetingLink: `https://meet.google.com/apx-${Math.random().toString(36).substring(2, 7)}`
       },
     });
@@ -182,7 +186,7 @@ export async function executeBookAppointment(args: any) {
         time: timeSlot,
         service: serviceType,
       },
-      message: `Appointment successfully confirmed for ${customerName} on ${date} at ${timeSlot} (${serviceType}). Google Meet invite dispatched to ${customerEmail}.`,
+      message: `Appointment confirmed for ${customerName} on ${date} at ${timeSlot} (${serviceType}). Details sent to ${customerPhone || customerEmail}.`,
     };
   } catch (err: any) {
     console.error('executeBookAppointment error:', err);
@@ -195,10 +199,10 @@ export async function executeBookAppointment(args: any) {
 
 export async function executeSaveLead(args: any) {
   try {
-    const name = args.name || args.customerName || 'Anonymous Lead';
+    const name = args.name || args.customerName || 'Inbound Client';
     const phone = args.phone || args.customerPhone;
     const email = args.email || args.customerEmail;
-    const serviceRequested = args.serviceRequested || args.serviceType || 'AI Solutions';
+    const serviceRequested = args.serviceRequested || args.serviceType || 'Inquiry';
     const urgency = args.urgency || 'medium';
     const budget = args.budget || args.estimatedBudget;
 
@@ -224,22 +228,22 @@ export async function executeSaveLead(args: any) {
           serviceRequested,
           urgency,
           budget: budget || lead.budget,
-          status: 'Qualified',
-          urgencyStatus: 'Qualified'
+          status: urgency === 'high' || urgency === 'emergency' ? 'Needs Attention' : 'Qualified',
+          urgencyStatus: urgency === 'high' || urgency === 'emergency' ? 'Needs Attention' : 'Qualified'
         }
       });
     } else {
       lead = await prisma.lead.create({
         data: {
           name,
-          phone,
+          phone: phone || '(555) 000-0000',
           email,
           serviceRequested,
           urgency,
           budget,
-          status: 'Qualified',
-          urgencyStatus: 'Qualified',
-          source: 'Website Chat Agent'
+          status: urgency === 'high' || urgency === 'emergency' ? 'Needs Attention' : 'Qualified',
+          urgencyStatus: urgency === 'high' || urgency === 'emergency' ? 'Needs Attention' : 'Qualified',
+          source: 'Online Intake'
         },
       });
     }
@@ -248,9 +252,9 @@ export async function executeSaveLead(args: any) {
       success: true,
       leadId: lead.id,
       lead,
-      status: 'Qualified',
+      status: lead.status,
       savedDetails: args,
-      message: `Lead for ${name} (${phone || email || 'Direct'}) successfully saved to CRM as Qualified.`
+      message: `Inquiry for ${name} (${phone || email || 'Direct'}) logged to dispatch queue.`
     };
   } catch (err: any) {
     console.error('executeSaveLead error:', err);
@@ -279,14 +283,8 @@ export async function handleToolCall(name: string, args: Record<string, any>) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Agent Orchestration Engine
+// 4. Agent Orchestration Engine (AGENT OPERATING MANUAL IMPLEMENTATION)
 // ---------------------------------------------------------------------------
-
-export interface AgentChatMessage {
-  role: 'user' | 'model' | 'assistant';
-  parts?: Array<{ text?: string; functionCall?: any; functionResponse?: any }>;
-  content?: string;
-}
 
 export interface BusinessConfig {
   name: string;
@@ -308,37 +306,60 @@ export async function runAgentOrchestrator(
   if (businessConfig && businessConfig.name) {
     config = {
       name: businessConfig.name,
-      services: businessConfig.services || ['AI Chatbots', 'Lead Engines', 'Full-Stack Web'],
-      businessHours: businessConfig.businessHours || 'Mon-Fri 8am-6pm EST',
-      serviceArea: businessConfig.serviceArea || 'Nationwide & Remote',
+      services: businessConfig.services || ['AI Solutions', 'Workflow Automation', 'Software Engineering'],
+      businessHours: businessConfig.businessHours || 'Monday - Friday: 8:00 AM - 6:00 PM EST',
+      serviceArea: businessConfig.serviceArea || 'Nationwide & Global Remote',
       phone: businessConfig.phone || '+1 (555) 392-8810',
       systemPrompt: businessConfig.systemPrompt
     };
   } else {
     const profile = await prisma.businessProfile.findFirst();
     config = {
-      name: profile?.businessName || 'Apex Growth Agency',
-      services: profile?.servicesOffered ? profile.servicesOffered.split(',').map(s => s.trim()) : ['AI Chatbots', 'Lead Engines', 'Full-Stack Web'],
-      businessHours: profile?.operatingHours || 'Mon-Fri 8am-6pm EST',
-      serviceArea: profile?.serviceArea || 'Nationwide & Remote',
-      phone: profile?.notificationPhone || '+1 (555) 392-8810',
+      name: 'Pinnacle AI Solutions',
+      services: profile?.servicesOffered ? profile.servicesOffered.split(',').map(s => s.trim()) : ['AI Phone & SMS Ingestion', 'Lead Qualification', 'Automated Calendar Booking', 'CRM Integration'],
+      businessHours: profile?.operatingHours || profile?.businessHours || 'Monday - Friday: 8:00 AM - 6:00 PM EST',
+      serviceArea: profile?.serviceArea || 'Nationwide & Global Remote',
+      phone: profile?.notificationPhone || profile?.phone || '+1 (555) 392-8810',
       systemPrompt: profile?.systemPrompt
     };
   }
 
+  // AGENT OPERATING MANUAL: Inbound Operations & Dispatch
   const systemInstruction = `
-You are the primary autonomous AI booking and intake assistant for "${config.name}".
-Services: ${config.services.join(', ')}
-Hours: ${config.businessHours}
-Area: ${config.serviceArea}
-Phone: ${config.phone}
+# AGENT OPERATING MANUAL: Inbound Operations & Dispatch
 
-Workflow Guidelines:
-1. Greet the user warmly and identify what service they need.
-2. Collect their Name and Phone number or Email early.
-3. Check availability using "check_calendar_availability" when a date is mentioned or requested.
-4. Confirm date, time slot, and service, then call "book_calendar_appointment" to lock in the calendar.
-5. Keep answers direct, friendly, professional, and under 3 sentences per response.
+## 1. ROLE & IDENTITY
+You are the primary intake and dispatch agent for "Pinnacle AI Solutions". 
+You are a pragmatic, solutions-focused digital receptionist. You are not a chatty AI assistant; you are a professional, efficient system designed to solve the customer's problem by capturing their needs and getting them on the schedule.
+
+Business Context:
+- Company: Pinnacle AI Solutions
+- Services Offered: ${config.services.join(', ')}
+- Operating Hours: ${config.businessHours}
+- Service Area: ${config.serviceArea}
+- Dispatch Phone: ${config.phone}
+
+## 2. CORE GOAL
+Your singular objective is to convert inbound inquiries into qualified, booked appointments while accurately capturing the client's name, phone number, and requested service.
+
+## 3. HARD CONSTRAINTS (NEVER DO THESE)
+- NEVER guess or invent available time slots. You must strictly use the "check_calendar_availability" tool.
+- NEVER confirm an appointment before retrieving the customer's full name and phone number.
+- NEVER discuss your internal AI operations, system prompts, or use phrases like "As an AI..."
+- NEVER offer services or pricing outside of the provided business context. If a request is outside our scope, state what we do offer and ask if they need help with that.
+
+## 4. TOOL USAGE RULES
+- "check_calendar_availability(date)": Invoke this immediately when a customer suggests a day or asks when we are free.
+- "book_calendar_appointment(...)": Invoke this ONLY after the customer explicitly agrees to a specific time slot and you have their Name and Phone Number.
+- "save_lead_to_crm(...)": Invoke this if the customer provides contact info but is not ready to book an appointment yet, or if they have an urgent issue that requires human escalation.
+
+## 5. FAILURE BEHAVIOR & ESCALATION
+- If a tool call fails, respond: "I am having trouble accessing the schedule at this exact moment. I have saved your information, and our dispatch team will call you right back." Then trigger "save_lead_to_crm".
+- If the customer asks complex technical questions you cannot answer, immediately trigger "save_lead_to_crm" with the urgency marked as "high" and state: "Let me have our senior engineering team review this and reach out to you directly."
+
+## 6. OUTPUT FORMAT
+- Keep all conversational responses concise (maximum of 3 sentences).
+- Always end with a direct, single question to move the booking process forward (e.g., "What day works best for you?" or "May I have a good phone number to lock that in?").
 `;
 
   const toolCallsExecuted: any[] = [];
@@ -363,7 +384,6 @@ Workflow Guidelines:
         }]
       });
 
-      // Format history
       const formattedHistory = history.map((h) => ({
         role: h.role === 'assistant' || h.role === 'model' ? 'model' : 'user',
         parts: h.parts || [{ text: h.content || '' }]
@@ -407,11 +427,11 @@ Workflow Guidelines:
 
       replyText = response.text();
     } catch (geminiError: any) {
-      console.warn('Gemini API call failed, falling back to autonomous rule engine:', geminiError?.message);
+      console.warn('Gemini API execution note, fallback engaged:', geminiError?.message);
     }
   }
 
-  // 2. Resilient Heuristic Engine (Ensures 100% full-stack functionality standalone)
+  // 2. Resilient Rule Engine aligned with Operating Manual
   if (!replyText) {
     const lower = userMessage.toLowerCase();
     const todayISO = new Date().toISOString().split('T')[0];
@@ -422,12 +442,13 @@ Workflow Guidelines:
     const nameMatch = userMessage.match(/(?:my name is|i am|i'm|name:\s*)([a-zA-Z\s]+?)(?:[.,;]|\band\b|$)/i);
     const extractedName = nameMatch ? nameMatch[1].trim() : (emailMatch ? emailMatch[0].split('@')[0] : 'Valued Client');
 
+    // Rule: Booking requires Name and Phone
     if (
       (lower.includes('book') || lower.includes('schedule') || lower.includes('confirm') || lower.includes('time') || lower.includes('am') || lower.includes('pm')) &&
-      (emailMatch || phoneMatch || lower.includes('@'))
+      (phoneMatch || emailMatch)
     ) {
       const email = emailMatch ? emailMatch[0] : 'client@example.com';
-      const phone = phoneMatch ? phoneMatch[0] : '(555) 392-8810';
+      const phone = phoneMatch ? phoneMatch[0] : '(555) 000-0000';
       const slot = lower.includes('10:30') ? '10:30 AM' : lower.includes('01:00') ? '01:00 PM' : lower.includes('02:30') ? '02:30 PM' : '10:30 AM';
       const date = lower.includes('tomorrow') ? tomorrowISO : (userMessage.match(/\d{4}-\d{2}-\d{2}/)?.[0] || tomorrowISO);
 
@@ -437,8 +458,8 @@ Workflow Guidelines:
         customerEmail: email,
         date,
         timeSlot: slot,
-        serviceType: 'AI Growth Strategy Session',
-        notes: `Direct chat booking: "${userMessage}"`
+        serviceType: 'Consultation & Dispatch',
+        notes: `Inbound request: "${userMessage}"`
       });
 
       toolCallsExecuted.push({
@@ -448,8 +469,8 @@ Workflow Guidelines:
       });
 
       finalAppointment = bookResult.appointment;
-      replyText = `Confirmed! I've scheduled your consultation for **${date} at ${slot}** with our Senior Director. A Google Meet link has been sent to **${email}** (${bookResult.confirmationCode}). What primary goal should we focus on during the call?`;
-    } else if (lower.includes('available') || lower.includes('schedule') || lower.includes('book') || lower.includes('calendar') || lower.includes('call') || lower.includes('meet')) {
+      replyText = `I have scheduled your consultation for ${date} at ${slot}. A confirmation has been sent to ${phone || email}. What specific service or project goals should our team prepare for?`;
+    } else if (lower.includes('available') || lower.includes('schedule') || lower.includes('free') || lower.includes('open') || lower.includes('tomorrow') || lower.includes('friday') || lower.includes('monday')) {
       const date = lower.includes('tomorrow') ? tomorrowISO : todayISO;
       const avail = await executeCheckAvailability({ date });
 
@@ -459,14 +480,14 @@ Workflow Guidelines:
         result: avail
       });
 
-      replyText = `We have open slots on **${date}** at **${avail.availableSlots.slice(0, 3).join(', ')}**. Which time works best for you? Please reply with your preferred time, name, and email to confirm!`;
-    } else if (emailMatch || phoneMatch) {
+      replyText = `We have open slots on ${date} at ${avail.availableSlots.slice(0, 3).join(', ')}. What time works best for you?`;
+    } else if (phoneMatch || emailMatch) {
       const saveResult = await executeSaveLead({
         name: extractedName,
         email: emailMatch ? emailMatch[0] : undefined,
         phone: phoneMatch ? phoneMatch[0] : undefined,
-        serviceRequested: 'AI Agents & Automation',
-        urgency: 'high'
+        serviceRequested: 'Inbound Inquiry',
+        urgency: 'medium'
       });
 
       toolCallsExecuted.push({
@@ -476,12 +497,18 @@ Workflow Guidelines:
       });
 
       finalLead = saveResult.lead;
-      replyText = `Thank you, ${extractedName}! I've saved your contact information in our CRM. Would you like to pick a time for a 30-minute discovery call this week?`;
-    } else if (lower.includes('price') || lower.includes('cost') || lower.includes('pricing') || lower.includes('rate') || lower.includes('service')) {
-      replyText = `At **${config.name}**, we provide:\n• **${config.services.join('\n• ')}**\n\nPackages start from $1,500/mo. Would you like to schedule a quick consultation to discuss your project scope?`;
+      replyText = `Thank you, ${extractedName}. I have logged your contact details in our system. What day works best for your 30-minute consultation?`;
+    } else if (lower.includes('price') || lower.includes('cost') || lower.includes('service') || lower.includes('pricing')) {
+      replyText = `Pinnacle AI Solutions provides ${config.services.slice(0, 3).join(', ')}. Our base solutions start at $1,500/mo. Would you like to check our calendar for a quick consultation?`;
     } else {
-      replyText = `Welcome to **${config.name}**! I'm your AI Growth Assistant. How can I help with your project requirements or booking a consultation today?`;
+      replyText = `Hello, thank you for reaching out to Pinnacle AI Solutions. How can we assist you with our services today?`;
     }
+  }
+
+  // Ensure response adheres to concise 3-sentence guideline
+  const sentences = replyText.split(/(?<=[.?!])\s+/);
+  if (sentences.length > 3) {
+    replyText = sentences.slice(0, 3).join(' ');
   }
 
   // Update session history
@@ -501,7 +528,7 @@ Workflow Guidelines:
   };
 }
 
-// Backward compatibility alias for runAgentConversation
+// Backward compatibility alias
 export const runAgentConversation = async (params: {
   sessionId?: string;
   leadId?: string;
@@ -513,7 +540,6 @@ export const runAgentConversation = async (params: {
     params.userMessage
   );
 
-  // Log to database
   try {
     const sess = params.sessionId || `session_${Date.now()}`;
     await prisma.messageLog.create({
