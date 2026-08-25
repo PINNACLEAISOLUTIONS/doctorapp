@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model BusinessProfile {
+  id                String   @id @default("biz_default")
+  name              String   @default("LeadRescue AI Solutions")
+  businessName      String   @default("LeadRescue AI Solutions")
+  industry          String   @default("Autonomous AI Lead Ingestion & Booking")
+  servicesOffered   String   @default("AI Phone & SMS Answering, Lead Qualification, Automated Calendar Booking, CRM Sync")
+  servicesJson      String   @default("[\"AI Phone & SMS Answering\", \"Lead Qualification\", \"Automated Calendar Booking\", \"CRM Sync\"]")
+  basePricing       String   @default("Starter: $1,500/mo, Growth: $3,500/mo, Enterprise Custom: $8,000+")
+  businessHours     String   @default("Monday - Friday: 8:00 AM - 6:00 PM EST, Saturday: 10:00 AM - 2:00 PM EST")
+  operatingHours    String   @default("Monday - Friday: 8:00 AM - 6:00 PM EST, Saturday: 10:00 AM - 2:00 PM EST")
+  serviceArea       String   @default("Nationwide & Global Remote")
+  phone             String   @default("+1 (555) 392-8810")
+  notificationPhone String   @default("+1 (555) 392-8810")
+  email             String   @default("leads@leadrescue.ai")
+  notificationEmail String   @default("leads@leadrescue.ai")
+  systemPrompt      String   @default("You are Alex, the primary autonomous intake and scheduling AI agent for LeadRescue AI. Your mission is to warmly engage potential clients, qualify their budget, timeline, and project needs, answer questions accurately, and book a 30-minute discovery consultation on our calendar.")
+  calendarTimeSlots String   @default("09:00 AM, 10:30 AM, 01:00 PM, 02:30 PM, 04:00 PM")
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+}
+
+model Lead {
+  id               String        @id @default(cuid())
+  name             String
+  phone            String?
+  email            String?
+  companyName      String?
+  projectDetails   String?
+  serviceRequested String?
+  budget           String?
+  urgency          String?       @default("medium") // "low", "medium", "high", "emergency"
+  urgencyStatus    String        @default("New")    // "New", "Qualified", "Booked", "Needs Attention"
+  status           String        @default("New")    // "New", "Qualified", "Booked", "Closed"
+  notes            String?
+  estimatedValue   Float         @default(2500)
+  source           String        @default("Website Chat Agent")
+  appointments     Appointment[]
+  messageLogs      MessageLog[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+model Appointment {
+  id           String   @id @default(cuid())
+  leadId       String?
+  lead         Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  clientName   String?
+  customerName String?
+  clientEmail  String?
+  email        String?
+  clientPhone  String?
+  phone        String?
+  date         String   // YYYY-MM-DD
+  timeSlot     String   // "10:30 AM"
+  serviceType  String   @default("AI Growth Consultation")
+  status       String   @default("Confirmed") // "Confirmed", "Completed", "Cancelled"
+  notes        String?
+  meetingLink  String   @default("https://meet.google.com/apx-grow-demo")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model MessageLog {
+  id          String   @id @default(cuid())
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sessionId   String   @default("session_default")
+  role        String   // "user", "assistant", "model", "system", "tool"
+  content     String
+  toolCalls   String?
+  toolResults String?
+  createdAt   DateTime @default(now())
+}
