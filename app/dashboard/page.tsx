@@ -423,6 +423,7 @@ export default function DashboardPage() {
         lead={selectedLeadForTranscript}
         isOpen={!!selectedLeadForTranscript}
         onClose={() => setSelectedLeadForTranscript(null)}
+        onUpdate={fetchDashboardData}
       />
 
       {/* Manual Inbound Intake Modal */}

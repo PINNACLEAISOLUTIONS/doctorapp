@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { runAgentConversation } from '@/lib/agent';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.json().catch(() => ({}));
@@ -11,15 +13,15 @@ export async function POST(req: NextRequest) {
     const bodyText = rawBody.Body || rawBody.message || rawBody.notes || 'Inbound inquiry via webhook';
     const callerName = rawBody.name || rawBody.callerName || (fromPhone ? `Inbound (${fromPhone})` : 'New Inbound Lead');
     const email = rawBody.email || rawBody.Email || undefined;
-    const source = rawBody.source || (rawBody.From ? 'Inbound SMS / Twilio Webhook' : 'External Webform Webhook');
+    const source = rawBody.source || (rawBody.From ? 'Inbound SMS Webhook' : 'External Webform Webhook');
 
     // 1. Initialize or find lead
     let lead = await prisma.lead.findFirst({
       where: {
         OR: [
-          { phone: fromPhone ? { equals: fromPhone } : undefined },
-          { email: email ? { equals: email } : undefined }
-        ]
+          fromPhone ? { phone: fromPhone } : undefined,
+          email ? { email } : undefined
+        ].filter(Boolean) as any
       }
     });
 
@@ -29,8 +31,10 @@ export async function POST(req: NextRequest) {
           name: callerName,
           phone: fromPhone,
           email,
+          serviceRequested: 'Inbound Inquiry',
           projectDetails: bodyText,
-          urgencyStatus: 'New',
+          urgencyStatus: 'Qualified',
+          status: 'Qualified',
           source
         }
       });
@@ -39,7 +43,8 @@ export async function POST(req: NextRequest) {
         where: { id: lead.id },
         data: {
           projectDetails: `${lead.projectDetails || ''} | ${bodyText}`,
-          urgencyStatus: 'Needs Attention'
+          urgencyStatus: 'Needs Attention',
+          status: 'Needs Attention'
         }
       });
     }
